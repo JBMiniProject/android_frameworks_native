@@ -56,6 +56,9 @@
 #include "LayerDim.h"
 #include "LayerScreenshot.h"
 #include "SurfaceFlinger.h"
+#ifdef QCOM_HARDWARE
+#include "qcom_ui.h"
+#endif
 
 #include "DisplayHardware/DisplayHardware.h"
 #include "DisplayHardware/HWComposer.h"
@@ -66,10 +69,6 @@
 
 #ifdef BOARD_USES_SAMSUNG_HDMI
 #include "SecTVOutService.h"
-#endif
-
-#ifdef QCOMHW
-#include <clear_regions.h>
 #endif
 
 #define EGL_VERSION_HW_ANDROID  0x3143
@@ -577,7 +576,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
             // Currently unused: const uint32_t flags = mCurrentState.orientationFlags;
             GraphicPlane& plane(graphicPlane(dpy));
             plane.setOrientation(orientation);
-#ifdef QCOMHW
+#ifdef QCOM_HARDWARE
             const Transform& planeTransform(plane.transform());
 #endif
             // update the shared control block
@@ -602,7 +601,7 @@ void SurfaceFlinger::handleTransactionLocked(uint32_t transactionFlags)
             else
                 mHdmiClient->setHdmiRotate(0, overlayLayerCount);
 #endif
-#ifdef QCOMHW
+#ifdef QCOM_HARDWARE
             //set the new orientation to HWC
             HWComposer& hwc(graphicPlane(0).displayHardware().getHwComposer());
             hwc.eventControl(DisplayHardware::EVENT_ORIENTATION,
@@ -972,13 +971,24 @@ void SurfaceFlinger::composeSurfaces(const Region& dirty)
             // remove where there are opaque FB layers. however, on some
             // GPUs doing a "clean slate" glClear might be more efficient.
             // We'll revisit later if needed.
-            glClearColor(0, 0, 0, 0);
-            glClear(GL_COLOR_BUFFER_BIT);
+             const Region region(hw.bounds());
+#ifdef QCOM_HARDWARE
+             if (0 != qdutils::CBUtils::qcomuiClearRegion(region,
+                                              hw.getEGLDisplay()))
+#endif
+             {
+                 glClearColor(0, 0, 0, 0);
+                 glClear(GL_COLOR_BUFFER_BIT);
+             }
         } else {
             // screen is already cleared here
             if (!mWormholeRegion.isEmpty()) {
                 // can happen with SurfaceView
-                drawWormhole();
+#ifdef QCOM_HARDWARE
+                if (0 != qdutils::CBUtils::qcomuiClearRegion(mWormholeRegion,
+                                            hw.getEGLDisplay()))
+#endif
+                    drawWormhole();
             }
         }
 
@@ -1004,10 +1014,19 @@ void SurfaceFlinger::composeSurfaces(const Region& dirty)
                             && layer->isOpaque()) {
                         // never clear the very first layer since we're
                         // guaranteed the FB is already cleared
+#ifdef QCOM_HARDWARE
+                        if (0 != qdutils::CBUtils::qcomuiClearRegion(clip,
+                                                           hw.getEGLDisplay()))
+#endif
                         layer->clearWithOpenGL(clip);
                     }
                     continue;
                 }
+#ifdef QCOM_HARDWARE
+                if (cur && (cur[i].compositionType != HWC_FRAMEBUFFER))
+                    continue;
+#endif
+
                 // render the layer
                 layer->draw(clip);
             }
@@ -1015,8 +1034,9 @@ void SurfaceFlinger::composeSurfaces(const Region& dirty)
     } else if (cur && !mWormholeRegion.isEmpty()) {
             const Region region(mWormholeRegion.intersect(mDirtyRegion));
             if (!region.isEmpty()) {
-#ifdef QCOMHW
-               if (0 != qdutils::qcomuiClearRegion(region, hw.getEGLDisplay()))
+#ifdef QCOM_HARDWARE
+                if (0 != qdutils::CBUtils::qcomuiClearRegion(region,
+                                            hw.getEGLDisplay()))
 #endif
                       drawWormhole();
         }
@@ -1076,6 +1096,11 @@ void SurfaceFlinger::drawWormhole() const
     if (region.isEmpty())
         return;
 
+#ifdef QCOM_HARDWARE
+    const DisplayHardware& hw(graphicPlane(0).displayHardware());
+    const int32_t height = hw.getHeight();
+#endif
+
     glDisable(GL_TEXTURE_EXTERNAL_OES);
     glDisable(GL_TEXTURE_2D);
     glDisable(GL_BLEND);
@@ -1088,13 +1113,20 @@ void SurfaceFlinger::drawWormhole() const
     while (it != end) {
         const Rect& r = *it++;
         vertices[0][0] = r.left;
-        vertices[0][1] = r.top;
         vertices[1][0] = r.right;
-        vertices[1][1] = r.top;
         vertices[2][0] = r.right;
-        vertices[2][1] = r.bottom;
         vertices[3][0] = r.left;
+#ifdef QCOM_HARDWARE
+        vertices[0][1] = height - r.top;
+        vertices[1][1] = height - r.top;
+        vertices[2][1] = height - r.bottom;
+        vertices[3][1] = height - r.bottom;
+#else
+        vertices[0][1] = r.top;
+        vertices[1][1] = r.top;
+        vertices[2][1] = r.bottom;
         vertices[3][1] = r.bottom;
+#endif
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     }
 }
