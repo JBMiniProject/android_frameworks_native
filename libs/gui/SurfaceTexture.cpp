@@ -230,6 +230,7 @@ status_t SurfaceTexture::updateTexImage(BufferRejecter* rejecter) {
     err = mBufferQueue->acquireBuffer(&item);
     if (err == NO_ERROR) {
         int buf = item.mBuf;
+
         // This buffer was newly allocated, so we need to clean up on our side
         if (item.mGraphicBuffer != NULL) {
             mEGLSlots[buf].mGraphicBuffer = 0;
@@ -239,6 +240,28 @@ status_t SurfaceTexture::updateTexImage(BufferRejecter* rejecter) {
             }
             mEGLSlots[buf].mGraphicBuffer = item.mGraphicBuffer;
         }
+#ifdef DECIDE_TEXTURE_TARGET
+        // GPU is not efficient in handling GL_TEXTURE_EXTERNAL_OES
+        // texture target. Depending on the image format, decide,
+        // the texture target to be used
+
+        if(isComposition){
+            switch (mEGLSlots[buf].mGraphicBuffer->format) {
+                case HAL_PIXEL_FORMAT_RGBA_8888:
+                case HAL_PIXEL_FORMAT_RGBX_8888:
+                case HAL_PIXEL_FORMAT_RGB_888:
+                case HAL_PIXEL_FORMAT_RGB_565:
+                case HAL_PIXEL_FORMAT_BGRA_8888:
+                case HAL_PIXEL_FORMAT_RGBA_5551:
+                case HAL_PIXEL_FORMAT_RGBA_4444:
+                    mTexTarget = GL_TEXTURE_2D;
+                    break;
+                default:
+                    mTexTarget = GL_TEXTURE_EXTERNAL_OES;
+                    break;
+            }
+        }
+#endif
 
         // we call the rejecter here, in case the caller has a reason to
         // not accept this buffer. this is used by SurfaceFlinger to
@@ -268,28 +291,7 @@ status_t SurfaceTexture::updateTexImage(BufferRejecter* rejecter) {
                     image = createImage(dpy, mEGLSlots[buf].mGraphicBuffer);
                     mEGLSlots[buf].mEglImage = image;
 
-#ifdef DECIDE_TEXTURE_TARGET
-                // GPU is not efficient in handling GL_TEXTURE_EXTERNAL_OES
-                // texture target. Depending on the image format, decide,
-                // the texture target to be used
 
-                if(isComposition){
-                    switch (mEGLSlots[buf].mGraphicBuffer->format) {
-                        case HAL_PIXEL_FORMAT_RGBA_8888:
-                        case HAL_PIXEL_FORMAT_RGBX_8888:
-                        case HAL_PIXEL_FORMAT_RGB_888:
-                        case HAL_PIXEL_FORMAT_RGB_565:
-                        case HAL_PIXEL_FORMAT_BGRA_8888:
-                        case HAL_PIXEL_FORMAT_RGBA_5551:
-                        case HAL_PIXEL_FORMAT_RGBA_4444:
-                            mTexTarget = GL_TEXTURE_2D;
-                            break;
-                        default:
-                            mTexTarget = GL_TEXTURE_EXTERNAL_OES;
-                            break;
-                    }
-                }
-#endif
                     if (image == EGL_NO_IMAGE_KHR) {
                         // NOTE: if dpy was invalid, createImage() is guaranteed to
                         // fail. so we'd end up here.
